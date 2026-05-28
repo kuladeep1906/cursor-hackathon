@@ -1,0 +1,23 @@
+{
+  "name": "git-commit-pr-automator",
+  "version": "1.0.0",
+  "description": "Hackathon scaffold for semantic commit and PR automation from git diffs.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "cli": "node src/autocommit.js",
+    "test": "node --test tests/autocommit.test.js"
+  },
+  "keywords": [
+    "git",
+    "automation",
+    "commit",
+    "pull-request",
+    "hackathon"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^5.2.1"
+  }
+}

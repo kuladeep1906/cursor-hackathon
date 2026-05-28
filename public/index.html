@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Git Commit & PR Automator</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ["Inter", "system-ui", "sans-serif"] },
+          colors: {
+            sand: { 50: "#FAF8F5", 100: "#F3EFE8", 200: "#E8DFD3", 300: "#D6C9B8" }
+          }
+        }
+      }
+    };
+  </script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+  <style>
+    /* ── Markdown output styles ─────────────────────────────────────────────── */
+    .md-body h1  { font-size: 1.35rem; font-weight: 700; color: #1c1917; border-bottom: 1px solid #e7e5e4; padding-bottom: .5rem; margin-bottom: 1rem; }
+    .md-body h2  { font-size: 1rem; font-weight: 700; color: #292524; margin: 1.4rem 0 .45rem; }
+    .md-body h3  { font-size: .9rem; font-weight: 600; color: #44403c; margin: 1.1rem 0 .35rem; }
+    .md-body p   { line-height: 1.75; margin-bottom: .65rem; }
+    .md-body ul  { list-style: disc; padding-left: 1.4rem; margin-bottom: .75rem; }
+    .md-body ol  { list-style: decimal; padding-left: 1.4rem; margin-bottom: .75rem; }
+    .md-body li  { margin-bottom: .2rem; line-height: 1.65; }
+    .md-body hr  { border-color: #e7e5e4; margin: 1.1rem 0; }
+    .md-body blockquote { border-left: 3px solid #d6d3d1; padding-left: .9rem; color: #78716c; font-style: italic; margin-bottom: .75rem; }
+    .md-body code:not(pre code) {
+      background: #f5f5f4; padding: .15em .4em; border-radius: 4px;
+      font-family: ui-monospace, "JetBrains Mono", monospace;
+      font-size: .82em; color: #b45309;
+    }
+    .md-body pre  {
+      border-radius: 10px; overflow-x: auto;
+      margin-bottom: 1rem; border: 1px solid #e7e5e4;
+    }
+    .md-body pre code {
+      display: block; padding: .9rem 1rem;
+      font-family: ui-monospace, "JetBrains Mono", monospace;
+      font-size: .78rem; line-height: 1.65; background: #292524; color: #f5f5f4;
+    }
+    /* Diff block overrides */
+    .diff-block       { background: #fafaf9 !important; }
+    .diff-block code  { background: transparent !important; color: inherit !important; }
+    .diff-add  { display: block; color: #166534; background: #f0fdf4; }
+    .diff-del  { display: block; color: #991b1b; background: #fef2f2; }
+    .diff-hunk { display: block; color: #1e40af; background: #eff6ff; }
+    .diff-ctx  { display: block; color: #44403c; }
+    /* Tables */
+    .md-body table   { width: 100%; border-collapse: collapse; font-size: .82rem; margin-bottom: .9rem; }
+    .md-body th      { background: #f5f5f4; text-align: left; padding: .45rem .75rem; border: 1px solid #e7e5e4; font-weight: 600; color: #292524; }
+    .md-body td      { padding: .45rem .75rem; border: 1px solid #e7e5e4; }
+    .md-body tr:nth-child(even) td { background: #fafaf9; }
+
+    /* ── Stepper connector ──────────────────────────────────────────────────── */
+    .step-line { flex: 1; height: 2px; background: #e7e5e4; margin: 1.1rem .4rem 0; transition: background .4s ease; }
+    .step-line.active { background: #16a34a; }
+
+    /* ── Active step pulse ──────────────────────────────────────────────────── */
+    @keyframes pulse-amber {
+      0%,100% { box-shadow: 0 0 0 0 rgba(217,119,6,.45); }
+      60%      { box-shadow: 0 0 0 7px rgba(217,119,6,0); }
+    }
+    .pulsing { animation: pulse-amber 1.4s ease-in-out infinite; }
+
+    /* ── Scrollbar ──────────────────────────────────────────────────────────── */
+    .scroll-area::-webkit-scrollbar       { width: 5px; }
+    .scroll-area::-webkit-scrollbar-track { background: transparent; }
+    .scroll-area::-webkit-scrollbar-thumb { background: #d6d3d1; border-radius: 99px; }
+  </style>
+</head>
+
+<body class="bg-sand-50 min-h-screen font-sans text-stone-900 antialiased">
+
+  <!-- ── Header ─────────────────────────────────────────────────────────────── -->
+  <header class="bg-white border-b border-stone-200 sticky top-0 z-20">
+    <div class="max-w-4xl mx-auto px-6 h-14 flex items-center gap-3">
+      <!-- Logo mark -->
+      <div class="w-7 h-7 bg-stone-900 rounded-lg flex items-center justify-center flex-shrink-0">
+        <svg class="w-3.5 h-3.5 text-white" fill="currentColor" viewBox="0 0 20 20">
+          <path fill-rule="evenodd" d="M10 2a1 1 0 011 1v1.323l3.954 1.582 1.599-.8a1 1 0 01.894 1.79l-1.233.616 1.738 5.42a1 1 0 01-.285 1.05A3.989 3.989 0 0115 14a3.989 3.989 0 01-2.667-1.019 1 1 0 01-.285-1.05l1.715-5.349L11 6.477V16h2a1 1 0 110 2H7a1 1 0 110-2h2V6.477L6.237 7.582l1.715 5.349a1 1 0 01-.285 1.05A3.989 3.989 0 015 15a3.989 3.989 0 01-2.667-1.019 1 1 0 01-.285-1.05l1.738-5.42-1.233-.617a1 1 0 01.894-1.788l1.599.799L9 4.323V3a1 1 0 011-1z" clip-rule="evenodd"/>
+        </svg>
+      </div>
+      <div class="leading-tight">
+        <p class="text-sm font-semibold text-stone-900 leading-none">Git Commit & PR Automator</p>
+        <p class="text-xs text-stone-400 mt-0.5">Semantic commit generation · Hackathon Edition</p>
+      </div>
+      <div class="ml-auto flex items-center gap-1.5 text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-1 rounded-full">
+        <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+        Server Online
+      </div>
+    </div>
+  </header>
+
+  <!-- ── Main ───────────────────────────────────────────────────────────────── -->
+  <main class="max-w-4xl mx-auto px-6 py-10 space-y-8">
+
+    <!-- Hero text -->
+    <div>
+      <h1 class="text-2xl font-bold text-stone-900 tracking-tight">Analyze Git Workspace</h1>
+      <p class="text-stone-500 mt-1 text-sm leading-relaxed max-w-xl">
+        Reads your staged diff, classifies the change type, and produces a semantic commit
+        message and pull request description — instantly, no API key required.
+      </p>
+    </div>
+
+    <!-- ── Primary card ────────────────────────────────────────────────────── -->
+    <div class="bg-white rounded-2xl border border-stone-200 shadow-sm divide-y divide-stone-100 overflow-hidden">
+
+      <!-- Card header + CTA -->
+      <div class="px-8 py-6 flex items-center justify-between gap-6 flex-wrap">
+        <div>
+          <p class="font-semibold text-stone-800">Run Agent Loop</p>
+          <p class="text-xs text-stone-400 mt-0.5">Executes the 4-step pipeline against your local repo</p>
+        </div>
+        <button
+          id="analyze-btn"
+          onclick="analyze()"
+          class="inline-flex items-center gap-2 bg-stone-900 text-white text-sm font-semibold px-5 py-2.5 rounded-xl
+                 hover:bg-stone-700 active:scale-95 transition-all duration-150
+                 disabled:opacity-50 disabled:cursor-not-allowed disabled:scale-100 select-none"
+        >
+          <!-- Search icon (idle) -->
+          <svg id="btn-icon-search" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+          </svg>
+          <!-- Spinner (loading) — hidden by default -->
+          <svg id="btn-icon-spin" class="hidden w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/>
+          </svg>
+          <span id="btn-label">Analyze Git Workspace</span>
+        </button>
+      </div>
+
+      <!-- ── Stepper (hidden until first run) ─────────────────────────────── -->
+      <div id="stepper" class="hidden px-8 py-6 bg-sand-50">
+        <p class="text-xs font-semibold text-stone-400 uppercase tracking-widest mb-5">Agent Loop</p>
+        <div class="flex items-start">
+
+          <!-- Step template — 4 steps + 3 connectors -->
+          <div id="s0" class="flex flex-col items-center">
+            <div class="s-circle w-9 h-9 rounded-full border-2 border-stone-300 bg-white flex items-center justify-center transition-all duration-300">
+              <span class="s-num text-sm font-bold text-stone-400">1</span>
+              <svg class="s-check hidden w-4 h-4 text-white" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+            </div>
+            <span class="s-label mt-2.5 text-xs font-medium text-stone-400 whitespace-nowrap">🔍 Reading</span>
+          </div>
+          <div id="l0" class="step-line"></div>
+
+          <div id="s1" class="flex flex-col items-center">
+            <div class="s-circle w-9 h-9 rounded-full border-2 border-stone-300 bg-white flex items-center justify-center transition-all duration-300">
+              <span class="s-num text-sm font-bold text-stone-400">2</span>
+              <svg class="s-check hidden w-4 h-4 text-white" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+            </div>
+            <span class="s-label mt-2.5 text-xs font-medium text-stone-400 whitespace-nowrap">🧠 Classifying</span>
+          </div>
+          <div id="l1" class="step-line"></div>
+
+          <div id="s2" class="flex flex-col items-center">
+            <div class="s-circle w-9 h-9 rounded-full border-2 border-stone-300 bg-white flex items-center justify-center transition-all duration-300">
+              <span class="s-num text-sm font-bold text-stone-400">3</span>
+              <svg class="s-check hidden w-4 h-4 text-white" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+            </div>
+            <span class="s-label mt-2.5 text-xs font-medium text-stone-400 whitespace-nowrap">🤖 Generating</span>
+          </div>
+          <div id="l2" class="step-line"></div>
+
+          <div id="s3" class="flex flex-col items-center">
+            <div class="s-circle w-9 h-9 rounded-full border-2 border-stone-300 bg-white flex items-center justify-center transition-all duration-300">
+              <span class="s-num text-sm font-bold text-stone-400">4</span>
+              <svg class="s-check hidden w-4 h-4 text-white" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+            </div>
+            <span class="s-label mt-2.5 text-xs font-medium text-stone-400 whitespace-nowrap">✅ Done</span>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- ── Metadata row (hidden until done) ─────────────────────────────── -->
+      <div id="metadata-row" class="hidden px-8 py-3.5 bg-sand-50 flex items-center gap-2.5 flex-wrap">
+        <!-- Chips injected by JS -->
+      </div>
+
+      <!-- ── PR output (hidden until done) ────────────────────────────────── -->
+      <div id="output-section" class="hidden px-8 py-6">
+        <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
+          <h2 class="text-sm font-semibold text-stone-700">Generated PR Description</h2>
+          <button
+            id="copy-btn"
+            onclick="copyContent()"
+            class="inline-flex items-center gap-1.5 text-xs font-medium text-stone-600
+                   bg-stone-100 hover:bg-stone-200 border border-stone-200
+                   px-3 py-1.5 rounded-lg transition-colors duration-150 select-none"
+          >
+            <svg id="copy-icon" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+            </svg>
+            <span id="copy-label">Copy Markdown</span>
+          </button>
+        </div>
+
+        <!-- Rendered markdown -->
+        <div
+          id="md-output"
+          class="md-body text-sm text-stone-700 leading-relaxed
+                 max-h-[580px] overflow-y-auto scroll-area pr-1"
+        ></div>
+      </div>
+
+      <!-- ── Error state (hidden) ──────────────────────────────────────────── -->
+      <div id="error-section" class="hidden px-8 py-5">
+        <div class="flex gap-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl p-4">
+          <svg class="w-4 h-4 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+          </svg>
+          <div>
+            <p class="font-semibold text-sm">Analysis failed</p>
+            <p id="error-msg" class="text-xs mt-0.5 text-rose-600"></p>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /card -->
+
+    <!-- Footnote -->
+    <p class="text-xs text-stone-400 flex flex-wrap gap-x-3 gap-y-1">
+      <span>⚡ Runs <code class="font-mono bg-stone-100 px-1 py-0.5 rounded text-stone-600 text-[11px]">git diff --cached</code> locally</span>
+      <span>·</span>
+      <span>Falls back to a mock pipeline diff when nothing is staged</span>
+      <span>·</span>
+      <span>Zero external API keys required</span>
+    </p>
+
+  </main>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════ -->
+  <script>
+    "use strict";
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+    const $  = (id) => document.getElementById(id);
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    // Step animation delays — mirror the CLI timings
+    const DELAYS = [600, 700, 900, 400];
+
+    // Holds the raw markdown string for the Copy button
+    let rawMarkdown = "";
+
+    // ── Markdown renderer with diff syntax highlighting ───────────────────────
+    // marked.parse produces <pre><code class="language-diff">…</code></pre>
+    // We post-process that block to add per-line colour spans.
+    const colourDiff = (escapedCode) =>
+      escapedCode.split("\n").map((line) => {
+        if (line.startsWith("+"))  return `<span class="diff-add">${line}</span>`;
+        if (line.startsWith("-"))  return `<span class="diff-del">${line}</span>`;
+        if (line.startsWith("@@")) return `<span class="diff-hunk">${line}</span>`;
+        return `<span class="diff-ctx">${line}</span>`;
+      }).join("\n");
+
+    const renderMarkdown = (text) => {
+      let html = marked.parse(text);
+      // Replace diff fenced blocks with colour-coded version
+      html = html.replace(
+        /<pre><code class="language-diff">([\s\S]*?)<\/code><\/pre>/g,
+        (_, inner) =>
+          `<pre class="diff-block"><code>${colourDiff(inner)}</code></pre>`
+      );
+      return html;
+    };
+
+    // ── Badge helpers ─────────────────────────────────────────────────────────
+    const TYPE_COLORS = {
+      fix:      "bg-rose-100 text-rose-700 border-rose-200",
+      feat:     "bg-blue-100 text-blue-700 border-blue-200",
+      perf:     "bg-violet-100 text-violet-700 border-violet-200",
+      refactor: "bg-orange-100 text-orange-700 border-orange-200",
+      chore:    "bg-stone-100 text-stone-600 border-stone-200",
+    };
+
+    const chip = (cls, text) =>
+      `<span class="inline-flex items-center text-xs font-medium border px-2.5 py-0.5 rounded-full ${cls}">${text}</span>`;
+
+    // ── Stepper state machine ─────────────────────────────────────────────────
+    const resetSteps = () => {
+      for (let i = 0; i < 4; i++) {
+        const el = $(`s${i}`);
+        el.querySelector(".s-circle").className =
+          "s-circle w-9 h-9 rounded-full border-2 border-stone-300 bg-white flex items-center justify-center transition-all duration-300";
+        const num = el.querySelector(".s-num");
+        num.className = "s-num text-sm font-bold text-stone-400";
+        num.classList.remove("hidden");
+        el.querySelector(".s-check").classList.add("hidden");
+        el.querySelector(".s-label").className =
+          "s-label mt-2.5 text-xs font-medium text-stone-400 whitespace-nowrap";
+        if (i < 3) $(`l${i}`).classList.remove("active");
+      }
+    };
+
+    const stepActive = (i) => {
+      const el   = $(`s${i}`);
+      const circ = el.querySelector(".s-circle");
+      circ.classList.remove("border-stone-300");
+      circ.classList.add("border-amber-500", "bg-amber-50", "pulsing");
+      el.querySelector(".s-num").classList.replace("text-stone-400", "text-amber-700");
+      el.querySelector(".s-label").classList.replace("text-stone-400", "text-amber-700");
+    };
+
+    const stepDone = (i) => {
+      const el   = $(`s${i}`);
+      const circ = el.querySelector(".s-circle");
+      circ.classList.remove("pulsing", "border-amber-500", "bg-amber-50", "border-stone-300");
+      circ.classList.add("bg-green-600", "border-green-600");
+      el.querySelector(".s-num").classList.add("hidden");
+      el.querySelector(".s-check").classList.remove("hidden");
+      const label = el.querySelector(".s-label");
+      label.classList.remove("text-amber-700", "text-stone-400");
+      label.classList.add("text-green-700");
+      if (i < 3) $(`l${i}`).classList.add("active");
+    };
+
+    // ── Copy handler ──────────────────────────────────────────────────────────
+    const copyContent = async () => {
+      if (!rawMarkdown) return;
+      try {
+        await navigator.clipboard.writeText(rawMarkdown);
+        $("copy-label").textContent = "Copied!";
+        $("copy-icon").innerHTML = `<path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>`;
+      } catch {
+        $("copy-label").textContent = "Copy failed";
+      }
+      setTimeout(() => {
+        $("copy-label").textContent = "Copy Markdown";
+        $("copy-icon").innerHTML = `<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>`;
+      }, 2200);
+    };
+
+    // ── Main analyze flow ─────────────────────────────────────────────────────
+    const analyze = async () => {
+      const btn = $("analyze-btn");
+
+      // Reset UI
+      $("output-section").classList.add("hidden");
+      $("metadata-row").classList.add("hidden");
+      $("error-section").classList.add("hidden");
+      $("stepper").classList.remove("hidden");
+      resetSteps();
+
+      // Button loading state
+      btn.disabled = true;
+      $("btn-label").textContent = "Analyzing…";
+      $("btn-icon-search").classList.add("hidden");
+      $("btn-icon-spin").classList.remove("hidden");
+
+      try {
+        // Fire fetch immediately — runs in parallel with the stepper animation
+        const fetchPromise = fetch("/api/generate").then((r) => {
+          if (!r.ok) throw new Error(`Server returned ${r.status}`);
+          return r.json();
+        });
+
+        // Animate first three steps with timed delays
+        for (let i = 0; i < 3; i++) {
+          stepActive(i);
+          await sleep(DELAYS[i]);
+          stepDone(i);
+        }
+
+        // Await the API response (likely already resolved by now)
+        const data = await fetchPromise;
+        rawMarkdown = data.markdown;
+
+        // Complete final step
+        stepActive(3);
+        await sleep(DELAYS[3]);
+        stepDone(3);
+
+        // Render metadata chips
+        const typeClass = TYPE_COLORS[data.changeType] ?? TYPE_COLORS.chore;
+        const mockChip  = data.usingMock
+          ? chip("bg-amber-50 text-amber-700 border-amber-200", "⚡ Mock diff")
+          : chip("bg-emerald-50 text-emerald-700 border-emerald-200", "🔴 Live diff");
+
+        $("metadata-row").innerHTML = [
+          chip(typeClass, data.changeType),
+          chip("bg-stone-100 text-stone-600 border-stone-200", `📁 ${data.files.length} file${data.files.length !== 1 ? "s" : ""}`),
+          mockChip,
+        ].join("");
+        $("metadata-row").classList.remove("hidden");
+
+        // Render markdown
+        $("md-output").innerHTML = renderMarkdown(rawMarkdown);
+
+        // Reveal output
+        $("output-section").classList.remove("hidden");
+        $("output-section").scrollIntoView({ behavior: "smooth", block: "nearest" });
+
+      } catch (err) {
+        $("error-msg").textContent = err.message;
+        $("error-section").classList.remove("hidden");
+      } finally {
+        btn.disabled = false;
+        $("btn-label").textContent = "Analyze Git Workspace";
+        $("btn-icon-search").classList.remove("hidden");
+        $("btn-icon-spin").classList.add("hidden");
+      }
+    };
+  </script>
+
+</body>
+</html>

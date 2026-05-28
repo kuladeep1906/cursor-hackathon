@@ -1,0 +1,15 @@
+You are working on the "Git Commit & PR Automator" Node.js project.
+
+Project Rules:
+- Use modern ES6+ JavaScript syntax only (`import`/`export`, arrow functions, `const`/`let`, template literals).
+- Keep code modular with small, composable functions and clear single responsibilities.
+- Prefer pure transformation helpers where possible; isolate side effects (filesystem, shell, logging).
+- Write readable, maintainable code with pragmatic naming and concise comments only when needed.
+- Keep terminal logs structured as clear numbered/step-like progress messages.
+- Always include emojis in terminal output to visualize the agent loop in action.
+
+Output Style for agent loop:
+1) 🔍 Read diff/workspace context
+2) 🧠 Categorize changes
+3) 🤖 Generate semantic commit + PR content
+4) 📝 Write output artifacts
