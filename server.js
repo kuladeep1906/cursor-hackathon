@@ -2,7 +2,7 @@ import express from "express";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import {
-  readStagedDiff,
+  readDiff,
   generatePRContent,
   classifyDiff,
   extractChangedFiles,
@@ -17,7 +17,7 @@ app.use(express.static(join(__dirname, "public")));
 
 app.get("/api/generate", (_req, res) => {
   try {
-    const { diff, usingMock } = readStagedDiff();
+    const { diff, usingMock } = readDiff();
     const markdown = generatePRContent(diff);
     const changeType = classifyDiff(diff);
     const files = extractChangedFiles(diff);

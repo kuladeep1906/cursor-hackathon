@@ -3,7 +3,7 @@ import { writeFileSync } from "fs";
 import { join } from "path";
 
 // ─── Mock diff ────────────────────────────────────────────────────────────────
-// Simulates a data-engineering update: pipeline optimisation + DB error handling.
+// Used as fallback when git diff HEAD returns nothing.
 const MOCK_DIFF = `\
 diff --git a/src/pipeline/transform.js b/src/pipeline/transform.js
 index 9a7e12f..fe13a22 100644
@@ -44,10 +44,10 @@ index 4f21d09..bc78a11 100644
 `;
 
 // ─── Diff reader ──────────────────────────────────────────────────────────────
-// Returns { diff, usingMock } so callers can surface the source to end users.
-export const readStagedDiff = () => {
+// git diff HEAD captures both staged and unstaged changes against the last commit.
+export const readDiff = () => {
   try {
-    const diff = execSync("git diff --cached", {
+    const diff = execSync("git diff HEAD", {
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();
@@ -74,29 +74,146 @@ export const extractChangedFiles = (diffText) => {
   return matches.map((m) => m[1]);
 };
 
+// ─── Per-file diff parser ─────────────────────────────────────────────────────
+// Returns one object per changed file with added/removed lines and hunk context.
+const parseDiffFiles = (diffText) => {
+  const blocks = diffText
+    .split(/(?=^diff --git )/m)
+    .filter((s) => s.trim().startsWith("diff --git"));
+
+  return blocks.map((block) => {
+    const pathMatch = block.match(/^diff --git a\/(.+?) b\//m);
+    const filePath = pathMatch ? pathMatch[1] : "unknown";
+    const ext = filePath.includes(".") ? filePath.split(".").pop().toLowerCase() : "";
+
+    const lines = block.split("\n");
+    // Strip the leading +/- sigil so downstream helpers work on plain code
+    const added   = lines.filter((l) => l.startsWith("+") && !l.startsWith("+++")).map((l) => l.slice(1));
+    const removed = lines.filter((l) => l.startsWith("-") && !l.startsWith("---")).map((l) => l.slice(1));
+
+    // Hunk headers carry the enclosing function name: @@ -n,m +n,m @@ fnContext
+    const hunkCtx = lines
+      .filter((l) => l.startsWith("@@"))
+      .map((l) => { const m = l.match(/@@ .+? @@ (.+)/); return m ? m[1].trim() : ""; })
+      .filter(Boolean);
+
+    return { filePath, ext, added, removed, hunkCtx };
+  });
+};
+
+// ─── Identifier extractor ─────────────────────────────────────────────────────
+// Finds declared function/variable names within an array of code lines.
+const SKIP = new Set(["if", "else", "for", "while", "try", "catch", "switch", "return"]);
+
+const extractIdentifiers = (codeLines) => {
+  const found = new Set();
+  for (const line of codeLines) {
+    const m = line.trim().match(/(?:export\s+)?(?:async\s+)?(?:const|let|var|function)\s+(\w+)/);
+    if (m && !SKIP.has(m[1])) found.add(m[1]);
+  }
+  return [...found].slice(0, 4);
+};
+
+// ─── Hunk-context function name ───────────────────────────────────────────────
+const fnFromCtx = (ctx) => {
+  if (!ctx) return null;
+  const m = ctx.match(/(?:export\s+)?(?:async\s+)?(?:const|let|var|function)\s+(\w+)/);
+  return m ? m[1] : null;
+};
+
+// ─── Commit title ─────────────────────────────────────────────────────────────
+const buildCommitTitle = (type, parsedFiles) => {
+  if (!parsedFiles.length) return `${type}: update codebase`;
+
+  const primary  = parsedFiles[0];
+  const baseName = primary.filePath.split("/").pop().replace(/\.[^.]+$/, "");
+  const fnName   = primary.hunkCtx.map(fnFromCtx).filter(Boolean)[0];
+  const others   = parsedFiles.length - 1;
+  const tail     = others > 0 ? ` and ${others} other file${others > 1 ? "s" : ""}` : "";
+
+  return fnName
+    ? `${type}: update \`${fnName}\` in ${baseName}${tail}`
+    : `${type}: update ${baseName}${tail}`;
+};
+
+// ─── "What Changed" — per-file modification bullets ──────────────────────────
+const buildModificationBullets = (parsedFiles) => {
+  return parsedFiles.map(({ filePath, added, removed, hunkCtx }) => {
+    const stats     = `+${added.length} / -${removed.length} lines`;
+    const ctxFns    = hunkCtx.map(fnFromCtx).filter(Boolean);
+    const ctxStr    = ctxFns.length ? ` in \`${ctxFns[0]}\`` : "";
+    const ids       = extractIdentifiers(added).filter((id) => !ctxFns.includes(id));
+    const idsStr    = ids.length ? ` — \`${ids.join("`, `")}\`` : "";
+    return `- \`${filePath}\` (${stats})${ctxStr}${idsStr}`;
+  });
+};
+
+// ─── Impact Analysis table ────────────────────────────────────────────────────
+const areaLabel = (ext, filePath) => {
+  if (/\.(test|spec)\.(js|ts|mjs)$/.test(filePath)) return "Test coverage";
+  if (ext === "sql")                                  return "Database queries";
+  if (["json", "yaml", "yml", "toml"].includes(ext)) return "Configuration";
+  if (["md", "txt", "rst"].includes(ext))            return "Documentation";
+  if (["js", "ts", "mjs", "cjs"].includes(ext))     return `Logic · \`${filePath.split("/").pop()}\``;
+  return `Source · \`${filePath.split("/").pop()}\``;
+};
+
+const riskLevel = (addCount, removeCount, type) => {
+  if (addCount + removeCount > 30) return "Medium";
+  if (type === "fix" && removeCount >= addCount) return "Low";
+  return "Low";
+};
+
+const VERB = { fix: "🛠️ Fixed", feat: "✨ Added", perf: "⚡ Optimised", refactor: "♻️ Refactored", chore: "🔧 Updated" };
+
+const buildImpactRows = (parsedFiles, type) => {
+  const verb = VERB[type] ?? "🔧 Updated";
+  const rows = parsedFiles.map(({ filePath, ext, added, removed }) =>
+    `| ${areaLabel(ext, filePath)} | ${verb} | ${riskLevel(added.length, removed.length, type)} |`
+  );
+  const compatNote = type === "fix" ? "defensive" : "additive or guarded";
+  rows.push(`| Backwards compat | ✅ Safe — all changes are ${compatNote} | None |`);
+  return rows;
+};
+
+// ─── Test plan ────────────────────────────────────────────────────────────────
+const buildTestItems = (parsedFiles) => {
+  return parsedFiles.map(({ filePath, added, hunkCtx }) => {
+    const ids    = extractIdentifiers(added);
+    const fnName = ids[0] ?? hunkCtx.map(fnFromCtx).filter(Boolean)[0]
+                           ?? filePath.split("/").pop().replace(/\.[^.]+$/, "");
+    return `- [ ] Unit: \`${fnName}\` with representative inputs and edge cases.`;
+  });
+};
+
 // ─── Core PR content generator (exported for unit tests) ─────────────────────
 export const generatePRContent = (diffText) => {
   if (!diffText || !diffText.trim()) {
     return [
       "# Pull Request Description",
       "",
-      "> ⚠️ No diff provided. Stage changes with `git add` and re-run.",
+      "> ⚠️ No diff provided. Run `git diff HEAD` to verify there are local changes.",
       "",
       "## What Changed",
-      "_Nothing staged._",
+      "_Nothing detected._",
       "",
       "## Impact Analysis",
       "_N/A — no diff to analyse._",
     ].join("\n");
   }
 
-  const type = classifyDiff(diffText);
-  const changedFiles = extractChangedFiles(diffText);
-  const fileList = changedFiles.length
-    ? changedFiles.map((f) => `- \`${f}\``).join("\n")
-    : "- _(could not parse file paths)_";
+  const type        = classifyDiff(diffText);
+  const parsedFiles = parseDiffFiles(diffText);
 
-  const commitTitle = `${type}: improve data pipeline reliability and error handling`;
+  const commitTitle = buildCommitTitle(type, parsedFiles);
+
+  const fileListItems = parsedFiles.length
+    ? parsedFiles.map((f) => `- \`${f.filePath}\``)
+    : ["- _(could not parse file paths)_"];
+
+  const modBullets = buildModificationBullets(parsedFiles);
+  const impactRows = buildImpactRows(parsedFiles, type);
+  const testItems  = buildTestItems(parsedFiles);
 
   return [
     "# Pull Request Description",
@@ -107,31 +224,24 @@ export const generatePRContent = (diffText) => {
     "---",
     "",
     "## What Changed",
-    fileList,
+    ...fileListItems,
     "",
     "### Key modifications",
-    "- Strengthened numeric coercion in the order-transformation function to prevent `NaN` totals.",
-    "- Added `sourceSystem` field normalisation with a safe fallback for legacy CSV sources.",
-    "- Converted DB connection to `async/await` with structured error propagation.",
-    "- Prevents silent connection failures from escaping into unhandled rejections.",
+    ...modBullets,
     "",
     "---",
     "",
     "## Impact Analysis",
     "| Area | Impact | Risk |",
     "|------|--------|------|",
-    "| Data integrity | ✅ Improved — malformed prices default to `0` | Low |",
-    "| Pipeline stability | ✅ Improved — status/source fields never `undefined` | Low |",
-    "| DB reliability | ✅ Improved — connection errors now caught + re-thrown | Medium |",
-    "| Backwards compat | ✅ Safe — all changes are additive or defensive | None |",
+    ...impactRows,
     "",
     "---",
     "",
     "## Test Plan",
-    "- [ ] Unit: `transformOrder` with missing `price`, `status`, `sourceSystem`.",
-    "- [ ] Unit: `connect()` rejects with descriptive error on bad `DB_URL`.",
-    "- [ ] Integration: pipeline run against staging dataset.",
-    "- [ ] Smoke: verify `PR_DESCRIPTION.md` generated by automator.",
+    ...testItems,
+    "- [ ] Integration: run pipeline end-to-end against staging data.",
+    "- [ ] Smoke: confirm `PR_DESCRIPTION.md` generated without errors.",
     "",
     "---",
     "",
@@ -166,9 +276,9 @@ if (isMain) {
   const run = async () => {
     console.log("\n🚀  Git Commit & PR Automator\n" + "─".repeat(40));
 
-    await step("🔍", "Step 1/4  Reading staged diff...", 500);
-    const { diff, usingMock } = readStagedDiff();
-    console.log(`      └─ diff loaded${usingMock ? " (no staged changes — using mock diff)" : " (live)"}`);
+    await step("🔍", "Step 1/4  Reading diff (git diff HEAD)...", 500);
+    const { diff, usingMock } = readDiff();
+    console.log(`      └─ diff loaded${usingMock ? " (nothing changed — using mock diff)" : " (live changes detected)"}`);
 
     await step("🧠", "Step 2/4  Classifying change type...", 700);
     const type = classifyDiff(diff);

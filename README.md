@@ -18,4 +18,3 @@ An agentic developer productivity tool built natively using Cursor best practice
 2. Spin up the application server: `npm start`
 
 
-final test
